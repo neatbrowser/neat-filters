@@ -1,0 +1,46 @@
+{
+  "uAssets": {
+    "repo": "https://github.com/uBlockOrigin/uAssets",
+    "rawBase": "https://raw.githubusercontent.com/uBlockOrigin/uAssets"
+  },
+  "uBlock": {
+    "repo": "https://github.com/gorhill/uBlock"
+  },
+  "braveResources": {
+    "repo": "https://github.com/brave/adblock-resources",
+    "rawBase": "https://raw.githubusercontent.com/brave/adblock-resources",
+    "path": "dist/resources.json"
+  },
+  "env": {
+    "ext_ublock": true,
+    "ext_ubol": false,
+    "ext_devbuild": false,
+    "env_devbuild": false,
+    "env_chromium": true,
+    "env_edge": false,
+    "env_firefox": false,
+    "env_legacy": false,
+    "env_mobile": false,
+    "env_mv3": false,
+    "env_safari": false,
+    "cap_html_filtering": false,
+    "cap_user_stylesheet": true,
+    "false": false,
+    "ext_abp": false,
+    "adguard": false
+  },
+  "lists": [
+    { "name": "ubo-filters.txt",        "title": "uBlock filters",                   "path": "filters/filters.txt",                   "trusted": true,  "minRules": 5000 },
+    { "name": "ubo-badware.txt",        "title": "uBlock filters – Badware risks",   "path": "filters/badware.txt",                   "trusted": true,  "minRules": 500 },
+    { "name": "ubo-privacy.txt",        "title": "uBlock filters – Privacy",         "path": "filters/privacy.txt",                   "trusted": true,  "minRules": 500 },
+    { "name": "ubo-quick-fixes.txt",    "title": "uBlock filters – Quick fixes",     "path": "filters/quick-fixes.txt",               "trusted": true,  "minRules": 100 },
+    { "name": "ubo-unbreak.txt",        "title": "uBlock filters – Unbreak",         "path": "filters/unbreak.txt",                   "trusted": true,  "minRules": 500 },
+    { "name": "ubo-resource-abuse.txt", "title": "uBlock filters – Resource abuse",  "path": "filters/resource-abuse.txt",            "trusted": true,  "minRules": 10 },
+    { "name": "easylist.txt",           "title": "EasyList",                         "path": "thirdparties/easylist/easylist.txt",    "trusted": false, "minRules": 20000 },
+    { "name": "easyprivacy.txt",        "title": "EasyPrivacy",                      "path": "thirdparties/easylist/easyprivacy.txt", "trusted": false, "minRules": 10000 }
+  ],
+  "sanity": {
+    "maxRuleDropRatio": 0.3
+  },
+  "excludeResources": ["google-ima-dai.js"]
+}

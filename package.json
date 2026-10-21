@@ -1,0 +1,9 @@
+{
+  "name": "neat-filters",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test scripts/*.test.mjs",
+    "build": "node scripts/build.mjs"
+  }
+}
