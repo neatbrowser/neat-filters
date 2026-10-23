@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { normalize, preprocess } from './preprocess.mjs';
+import { expandDenyallow, extractPopups, hostsToRules } from './transform.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Bit 0 = "trusted uBO list / trusted scriptlet". Must match TRUSTED in tools/nf-tool/src/main.rs.
@@ -106,14 +107,32 @@ async function buildLists(sources, uAssetsSha) {
   };
   const unknown = new Set();
   const lists = [];
+  const popups = new Set();
+  let expandedTotal = 0;
   for (const entry of sources.lists) {
     const text = await load(entry.path);
     const lines = await preprocess(text, { path: entry.path, env: sources.env, load, unknown });
-    const body = normalize(lines).join('\n') + '\n';
+    const rules = entry.format === 'hosts' ? hostsToRules(lines) : normalize(lines);
+    const expanded = expandDenyallow(rules);
+    const { kept, popups: found } = extractPopups(expanded.lines);
+    for (const p of found) popups.add(p);
+    expandedTotal += expanded.expanded;
+    const body = kept.join('\n') + '\n';
     lists.push({ entry, body });
-    log(`${entry.name}: ${body.length} bytes`);
+    log(`${entry.name}: ${body.length} bytes, ${expanded.expanded} denyallow rules expanded, ${found.length} popup rules moved`);
   }
   if (unknown.size) log(`unknown !#if conditions treated as false: ${[...unknown].join(', ')}`);
+  log(`denyallow rules expanded: ${expandedTotal}; popup rules: ${popups.size}`);
+
+  // Popup rules (converted to `$document`) are published as their own list.
+  const popupEntry = {
+    name: sources.popups.name,
+    title: sources.popups.title,
+    role: 'popup',
+    trusted: false,
+    minRules: sources.popups.minRules,
+  };
+  lists.push({ entry: popupEntry, body: [...popups].join('\n') + '\n' });
   return lists;
 }
 
@@ -203,7 +222,7 @@ async function main() {
     fs.writeFileSync(path.join(outDir, entry.name), body);
     files.push({
       name: entry.name, kind: 'list', title: entry.title, format: 'standard',
-      trusted: entry.trusted, sha256: sha256(body), size: Buffer.byteLength(body),
+      role: entry.role ?? 'network', trusted: entry.trusted, sha256: sha256(body), size: Buffer.byteLength(body),
     });
   }
   fs.writeFileSync(path.join(outDir, 'resources.json'), resourcesJson);
@@ -253,7 +272,7 @@ async function main() {
       f.rules = { network: r.network, cosmetic: r.cosmetic };
       f.invalidLines = r.parseErrors;
       const total = r.network + r.cosmetic;
-      const min = sources.lists.find(l => l.name === f.name)?.minRules ?? 1;
+      const min = [...sources.lists, sources.popups].find(l => l.name === f.name)?.minRules ?? 1;
       if (total < min) problems.push(`${f.name}: only ${total} rules (minimum ${min})`);
       const before = prevFiles.get(f.name)?.rules;
       if (before) {
