@@ -134,12 +134,4 @@ node scripts/build.mjs --force             # ignore "nothing changed"
 Add an entry to `lists` in `sources.json` (`name`, `title`, `path` inside the uAssets repo,
 `trusted`, `minRules`). Lists hosted elsewhere need a small change in `buildLists`.
 
-## CI notes
-
-- Cron: `17 */6 * * *`. Scheduled workflows are disabled after 60 days without repository
-  activity, so the workflow pushes an empty commit when the last commit is older than 45 days.
-- Releases are created as drafts, filled, then published, so `latest` never has missing files.
-- Pin the `actions/*` steps to commit SHAs (Dependabot can do this) if you want the pipeline itself
-  hardened.
-
 See [NOTICE.md](NOTICE.md) for upstream licenses.
