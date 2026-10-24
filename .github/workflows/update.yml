@@ -21,7 +21,7 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -41,12 +41,14 @@ jobs:
       - name: Unit tests
         run: node --test scripts/*.test.mjs
 
-      - name: Fetch previous manifest
+      # The whole previous release, not only its manifest: a list whose source is down keeps its
+      # previous copy (see buildLists in scripts/build.mjs).
+      - name: Fetch previous release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p prev
-          gh release download --pattern manifest.json --dir prev || echo "No previous release (first run)"
+          gh release download --pattern '*' --dir prev || echo "No previous release (first run)"
 
       - name: Build
         id: build
