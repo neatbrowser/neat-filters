@@ -31,84 +31,53 @@
   },
   "lists": [
     {
-      "name": "ubo-filters.txt",
-      "title": "uBlock filters",
-      "path": "filters/filters.txt",
-      "trusted": true,
-      "minRules": 5000
-    },
-    {
-      "name": "ubo-badware.txt",
-      "title": "uBlock filters \u2013 Badware risks",
-      "path": "filters/badware.txt",
-      "trusted": true,
-      "minRules": 500
-    },
-    {
-      "name": "ubo-privacy.txt",
-      "title": "uBlock filters \u2013 Privacy",
-      "path": "filters/privacy.txt",
-      "trusted": true,
-      "minRules": 500
-    },
-    {
-      "name": "ubo-quick-fixes.txt",
-      "title": "uBlock filters \u2013 Quick fixes",
-      "path": "filters/quick-fixes.txt",
-      "trusted": true,
-      "minRules": 100
-    },
-    {
-      "name": "ubo-unbreak.txt",
-      "title": "uBlock filters \u2013 Unbreak",
-      "path": "filters/unbreak.txt",
-      "trusted": true,
-      "minRules": 500
-    },
-    {
       "name": "ubo-resource-abuse.txt",
       "title": "uBlock filters \u2013 Resource abuse",
       "path": "filters/resource-abuse.txt",
       "trusted": true,
       "minRules": 10
-    },
-    {
-      "name": "easylist.txt",
-      "title": "EasyList",
-      "path": "thirdparties/easylist/easylist.txt",
-      "trusted": false,
-      "minRules": 20000
-    },
-    {
-      "name": "easyprivacy.txt",
-      "title": "EasyPrivacy",
-      "path": "thirdparties/easylist/easyprivacy.txt",
-      "trusted": false,
-      "minRules": 10000
-    },
-    {
-      "name": "peter-lowe.txt",
-      "title": "Peter Lowe's Ad and tracking server list",
-      "path": "thirdparties/pgl.yoyo.org/as/serverlist",
-      "format": "hosts",
-      "trusted": false,
-      "minRules": 2000
-    },
-    {
-      "name": "urlhaus.txt",
-      "title": "Online Malicious URL Blocklist (URLhaus)",
-      "path": "thirdparties/urlhaus-filter/urlhaus-filter-online.txt",
-      "trusted": false,
-      "minRules": 5000
     }
   ],
+  "uboAssets": {
+    "_comment": "Every filter list of uBlock Origin's assets.json (pinned uBlock commit) except those named in exclude. This is the set a person gets by ticking all lists in uBO except the ones below.",
+    "exclude": [
+      "ublock-experimental",
+      "adguard-generic",
+      "adguard-mobile",
+      "adguard-spyware-url",
+      "block-lan",
+      "curben-phishing",
+      "dpollock-0"
+    ],
+    "required": [
+      "ublock-filters",
+      "ublock-badware",
+      "ublock-privacy",
+      "ublock-unbreak",
+      "ublock-quick-fixes",
+      "easylist",
+      "easyprivacy"
+    ],
+    "minRules": {
+      "ublock-filters": 5000,
+      "ublock-badware": 500,
+      "ublock-privacy": 500,
+      "ublock-unbreak": 500,
+      "ublock-quick-fixes": 100,
+      "easylist": 20000,
+      "easyprivacy": 10000,
+      "plowe-0": 2000,
+      "urlhaus-1": 5000
+    }
+  },
   "popups": {
     "name": "popups.txt",
     "title": "Popup rules (converted from $popup and $popunder)",
     "minRules": 1000
   },
   "sanity": {
-    "maxRuleDropRatio": 0.3
+    "maxRuleDropRatio": 0.3,
+    "optionalDropRatio": 0.5
   },
   "excludeResources": [
     "google-ima-dai.js"

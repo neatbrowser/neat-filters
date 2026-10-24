@@ -17,9 +17,7 @@ Every release (tag `vYYYY.MM.DD.HHmm`, UTC) contains **all** files, so
 | --- | --- |
 | `manifest.json` | version, upstream commits, sha256 / size / rule counts per file |
 | `ubo-filters.txt`, `ubo-badware.txt`, `ubo-privacy.txt`, `ubo-quick-fixes.txt`, `ubo-unbreak.txt`, `ubo-resource-abuse.txt` | uBlock Origin's default lists (**trusted**) |
-| `easylist.txt`, `easyprivacy.txt` | EasyList / EasyPrivacy (not trusted) |
-| `peter-lowe.txt` | Peter Lowe's ad and tracking server list (hosts file, rewritten as rules; not trusted) |
-| `urlhaus.txt` | URLhaus online malicious URL list (not trusted) |
+| `<id>.txt` (about 60 files, named by their id in uBO's `assets.json`, e.g. `easylist.txt`, `fanboy-social.txt`, `vie-1.txt`, `rus-0.txt`, `urlhaus-1.txt`) | every list in uBlock Origin's `assets.json` except a few excluded ones (see `sources.json`). uBO-owned lists are **trusted**; the rest are not. Hosts-format lists are rewritten as rules. `manifest.json` records, per file, the address it was fetched from (`source`). If an upstream is down, the previous copy is kept |
 | `popups.txt` | all `$popup` / `$popunder` rules converted to `$document`, for a **second** engine (see [Popup blocking](#popup-blocking)) |
 | `resources.json` | adblock-rust `Resource[]`: uBO redirect resources, uBO scriptlets, Brave's extras |
 
@@ -133,5 +131,13 @@ node scripts/build.mjs --force             # ignore "nothing changed"
 
 Add an entry to `lists` in `sources.json` (`name`, `title`, `path` inside the uAssets repo,
 `trusted`, `minRules`). Lists hosted elsewhere need a small change in `buildLists`.
+
+## CI notes
+
+- Cron: `17 */6 * * *`. Scheduled workflows are disabled after 60 days without repository
+  activity, so the workflow pushes an empty commit when the last commit is older than 45 days.
+- Releases are created as drafts, filled, then published, so `latest` never has missing files.
+- Pin the `actions/*` steps to commit SHAs (Dependabot can do this) if you want the pipeline itself
+  hardened.
 
 See [NOTICE.md](NOTICE.md) for upstream licenses.

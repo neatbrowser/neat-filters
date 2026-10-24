@@ -102,3 +102,16 @@ export function hostsToRules(lines) {
   }
   return out;
 }
+
+/** True when a list is in hosts-file format (most of its non-comment lines are `0.0.0.0 host`). */
+export function isHostsFormat(lines) {
+  let hosts = 0;
+  let other = 0;
+  for (const raw of lines) {
+    const line = raw.replace(/#.*$/, '').trim();
+    if (line === '' || line.startsWith('!')) continue;
+    if (/^(?:0\.0\.0\.0|127\.0\.0\.1)\s+\S+$/.test(line)) hosts++;
+    else other++;
+  }
+  return hosts >= 20 && hosts > other * 4;
+}

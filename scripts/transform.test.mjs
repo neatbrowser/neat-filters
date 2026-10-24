@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { expandDenyallow, expandDenyallowLine, extractPopups, hostsToRules, splitNetworkRule } from './transform.mjs';
+import { expandDenyallow, expandDenyallowLine, extractPopups, hostsToRules, isHostsFormat, splitNetworkRule } from './transform.mjs';
 
 test('splitNetworkRule ignores cosmetic rules and non-option tails', () => {
   assert.equal(splitNetworkRule('example.com##a[href*="$popup"]'), null);
@@ -80,4 +80,11 @@ test('hosts files become blocking rules', () => {
     ]),
     ['||ads.example.com^', '||track.example.net^'],
   );
+});
+
+test('hosts format is told from filter syntax', () => {
+  const hosts = Array.from({ length: 30 }, (_, i) => `0.0.0.0 h${i}.example`);
+  assert.equal(isHostsFormat(['# c', ...hosts]), true);
+  assert.equal(isHostsFormat(['||a.example^', '||b.example^$script', ...hosts.slice(0, 5)]), false);
+  assert.equal(isHostsFormat(['! only comments', '||a.example^']), false);
 });

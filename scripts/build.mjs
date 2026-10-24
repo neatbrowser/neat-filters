@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { normalize, preprocess } from './preprocess.mjs';
-import { expandDenyallow, extractPopups, hostsToRules } from './transform.mjs';
+import { expandDenyallow, extractPopups, hostsToRules, isHostsFormat } from './transform.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Bit 0 = "trusted uBO list / trusted scriptlet". Must match TRUSTED in tools/nf-tool/src/main.rs.
@@ -54,16 +54,18 @@ function runChecked(cmd, args, opts) {
   return r.stdout;
 }
 
-async function fetchText(url) {
+const FETCH_ATTEMPTS = Number(process.env.NF_FETCH_ATTEMPTS) || 4;
+
+async function fetchText(url, attempts = FETCH_ATTEMPTS) {
   let lastErr;
-  for (let attempt = 1; attempt <= 4; attempt++) {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await res.text();
     } catch (e) {
       lastErr = e;
-      log(`fetch failed (${attempt}/4) ${url}: ${e.message}`);
+      log(`fetch failed (${attempt}/${attempts}) ${url}: ${e.message}`);
       await new Promise(r => setTimeout(r, 2000 * attempt));
     }
   }
@@ -99,7 +101,63 @@ function setOutput(key, value) {
 
 // ---------------------------------------------------------------- lists
 
-async function buildLists(sources, uAssetsSha) {
+const UAssetsPages = 'https://ublockorigin.github.io/uAssets/';
+
+/** uBO's own web mirror of uAssets -> the matching path in the uAssets repository (pinned), or null. */
+export function uAssetsPathFor(url) {
+  if (!url.startsWith(UAssetsPages)) return null;
+  const p = url.slice(UAssetsPages.length);
+  const m = /^thirdparties\/(easylist[^/]*|easyprivacy)\.txt$/.exec(p);
+  return m ? `thirdparties/easylist/${m[1]}.txt` : p;
+}
+
+/**
+ * The lists of uBO's assets.json (at the pinned uBlock commit), except those excluded, with the
+ * places each can be fetched from in order of preference: what uBO itself downloads first, the
+ * copy kept in uAssets last.
+ */
+export function assetLists(sources, assetsJson) {
+  const cfg = sources.uboAssets;
+  const exclude = new Set(cfg.exclude ?? []);
+  const required = new Set(cfg.required ?? []);
+  const out = [];
+  const seen = new Set();
+  for (const [id, a] of Object.entries(assetsJson)) {
+    if (a.content !== 'filters' || a.obsolete || exclude.has(id)) continue;
+    const candidates = [];
+    const add = c => { if (!candidates.some(x => x.raw === c.raw && x.url === c.url)) candidates.push(c); };
+    for (const u of [].concat(a.contentURL ?? [])) {
+      if (/^https?:/.test(u)) {
+        const raw = uAssetsPathFor(u);
+        add(raw ? { raw } : { url: u });
+      } else {
+        const p = u.replace(/^assets\//, '');
+        if (!p.startsWith('ublock/')) add({ raw: p });
+      }
+    }
+    if (candidates.length === 0) continue;
+
+    // Two entries of assets.json can name the same file (uBO shares one cookie-notice file);
+    // the engine must not load it twice.
+    const key = JSON.stringify(candidates[0]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    out.push({
+      id,
+      name: `${id.toLowerCase()}.txt`,
+      title: `${a.title} [${id}]`,
+      candidates,
+      // uBO's own lists (filters/*) may use trusted scriptlets; third-party lists may not.
+      trusted: candidates[0].raw?.startsWith('filters/') === true,
+      required: required.has(id),
+      minRules: cfg.minRules?.[id] ?? 1,
+    });
+  }
+  return out;
+}
+
+async function buildLists(sources, uAssetsSha, ublockDir, prev) {
   const cache = new Map();
   const load = async p => {
     if (!cache.has(p)) cache.set(p, fetchText(`${sources.uAssets.rawBase}/${uAssetsSha}/${p}`));
@@ -109,20 +167,79 @@ async function buildLists(sources, uAssetsSha) {
   const lists = [];
   const popups = new Set();
   let expandedTotal = 0;
-  for (const entry of sources.lists) {
-    const text = await load(entry.path);
-    const lines = await preprocess(text, { path: entry.path, env: sources.env, load, unknown });
-    const rules = entry.format === 'hosts' ? hostsToRules(lines) : normalize(lines);
+
+  const assetsJson = JSON.parse(fs.readFileSync(path.join(ublockDir, 'assets/assets.json'), 'utf8'));
+  const entries = [
+    ...sources.lists.map(e => ({ ...e, candidates: [{ raw: e.path }], required: true })),
+    ...assetLists(sources, assetsJson),
+  ];
+  const optionalDrop = sources.sanity?.optionalDropRatio ?? 0.5;
+  const reused = [];
+  const skipped = [];
+
+  const process_ = async (entry, text, listPath, loader) => {
+    const lines = await preprocess(text.replace(/^\uFEFF/, ''), { path: listPath, env: sources.env, load: loader, unknown });
+    const rules = entry.format === 'hosts' || isHostsFormat(lines) ? hostsToRules(lines) : normalize(lines);
     const expanded = expandDenyallow(rules);
     const { kept, popups: found } = extractPopups(expanded.lines);
-    for (const p of found) popups.add(p);
-    expandedTotal += expanded.expanded;
-    const body = kept.join('\n') + '\n';
-    lists.push({ entry, body });
-    log(`${entry.name}: ${body.length} bytes, ${expanded.expanded} denyallow rules expanded, ${found.length} popup rules moved`);
+    return { kept, found, denyallow: expanded.expanded };
+  };
+
+  for (const entry of entries) {
+    let result = null;
+    let source = null;
+    for (const c of entry.candidates) {
+      try {
+        let text;
+        let listPath;
+        let loader = load;
+        if (c.raw !== undefined) {
+          text = await load(c.raw);
+          listPath = c.raw;
+        } else {
+          // A list on another site includes its helper files from the same place (uBO resolves
+          // `!#include` relative to the list's address).
+          text = await fetchText(c.url, Math.min(FETCH_ATTEMPTS, 3));
+          const u = new URL(c.url);
+          listPath = u.pathname.slice(1);
+          loader = p => fetchText(`${u.origin}/${p}`, Math.min(FETCH_ATTEMPTS, 3));
+        }
+        result = await process_(entry, text, listPath, loader);
+        source = c.raw !== undefined ? `${sources.uAssets.repo}/blob/${uAssetsSha}/${c.raw}` : c.url;
+        break;
+      } catch (e) {
+        log(`${entry.name}: ${c.raw ?? c.url} unusable (${e.message.split('\n')[0]})`);
+      }
+    }
+
+    // A source that fails or shrinks a lot must not take protection away: the list of the
+    // previous release is kept instead (never for the lists that are required).
+    const prevEntry = prev.files.get(entry.name);
+    const prevTotal = prevEntry?.rules ? prevEntry.rules.network + prevEntry.rules.cosmetic : 0;
+    const fresh = result ? result.kept.length : 0;
+    const bad = !result || fresh < entry.minRules || (prevTotal > 0 && fresh < prevTotal * (1 - optionalDrop));
+    if (bad && !entry.required) {
+      const old = prevEntry && prev.read(entry.name);
+      if (old) {
+        log(`${entry.name}: ${result ? `shrank to ${fresh} rules from ${prevTotal}` : 'no source reachable'}; keeping the previous release's copy`);
+        lists.push({ entry, body: old, source: prevEntry.source });
+        reused.push(entry.name);
+      } else {
+        log(`${entry.name}: ${result ? `only ${fresh} rules` : 'no source reachable'} and no earlier copy; left out`);
+        skipped.push(entry.name);
+      }
+      continue;
+    }
+    if (!result) throw new Error(`${entry.name}: no source could be fetched`);
+
+    for (const p of result.found) popups.add(p);
+    expandedTotal += result.denyallow;
+    const body = result.kept.join('\n') + '\n';
+    lists.push({ entry, body, source });
+    log(`${entry.name}: ${body.length} bytes, ${result.denyallow} denyallow expanded, ${result.found.length} popup rules moved`);
   }
   if (unknown.size) log(`unknown !#if conditions treated as false: ${[...unknown].join(', ')}`);
-  log(`denyallow rules expanded: ${expandedTotal}; popup rules: ${popups.size}`);
+  log(`denyallow rules expanded: ${expandedTotal}; popup rules: ${popups.size}; lists reused from the previous release: ${reused.length}; left out: ${skipped.length}`);
 
   // Popup rules (converted to `$document`) are published as their own list.
   const popupEntry = {
@@ -133,7 +250,7 @@ async function buildLists(sources, uAssetsSha) {
     minRules: sources.popups.minRules,
   };
   lists.push({ entry: popupEntry, body: [...popups].join('\n') + '\n' });
-  return lists;
+  return { lists, reused, skipped };
 }
 
 // ---------------------------------------------------------------- resources
@@ -197,6 +314,17 @@ async function main() {
 
   const prev = args.prev && fs.existsSync(args.prev) ? JSON.parse(fs.readFileSync(args.prev, 'utf8')) : null;
   const prevFiles = new Map((prev?.files ?? []).map(f => [f.name, f]));
+  // Files of the previous release (next to its manifest), used when a source cannot be fetched.
+  const prevDir = args.prev ? path.dirname(path.resolve(args.prev)) : null;
+  const prevLists = {
+    files: prevFiles,
+    read: name => {
+      const f = prevDir && path.join(prevDir, name);
+      return f && fs.existsSync(f) && prevFiles.get(name)?.sha256 === sha256(fs.readFileSync(f))
+        ? fs.readFileSync(f, 'utf8')
+        : null;
+    },
+  };
 
   // Pin upstreams
   const uAssetsSha = lsRemoteHead(sources.uAssets.repo);
@@ -211,18 +339,21 @@ async function main() {
   const toolBin = path.join(ROOT, 'tools/nf-tool/target/release/nf-tool');
 
   // Build content
-  const lists = await buildLists(sources, uAssetsSha);
+  const { lists, reused, skipped } = await buildLists(sources, uAssetsSha, ublockDir, prevLists);
   const resourcesJson = await buildResources(sources, ublockDir, braveSha, toolBin);
 
   fs.rmSync(outDir, { recursive: true, force: true });
   fs.mkdirSync(outDir, { recursive: true });
 
   const files = [];
-  for (const { entry, body } of lists) {
+  const minByName = new Map();
+  const requiredNames = new Set(lists.filter(l => l.entry.required).map(l => l.entry.name));
+  for (const { entry, body, source } of lists) {
     fs.writeFileSync(path.join(outDir, entry.name), body);
+    minByName.set(entry.name, entry.minRules ?? 1);
     files.push({
       name: entry.name, kind: 'list', title: entry.title, format: 'standard',
-      role: entry.role ?? 'network', trusted: entry.trusted, sha256: sha256(body), size: Buffer.byteLength(body),
+      role: entry.role ?? 'network', trusted: entry.trusted, source, sha256: sha256(body), size: Buffer.byteLength(body),
     });
   }
   fs.writeFileSync(path.join(outDir, 'resources.json'), resourcesJson);
@@ -272,9 +403,11 @@ async function main() {
       f.rules = { network: r.network, cosmetic: r.cosmetic };
       f.invalidLines = r.parseErrors;
       const total = r.network + r.cosmetic;
-      const min = [...sources.lists, sources.popups].find(l => l.name === f.name)?.minRules ?? 1;
+      const min = minByName.get(f.name) ?? 1;
       if (total < min) problems.push(`${f.name}: only ${total} rules (minimum ${min})`);
-      const before = prevFiles.get(f.name)?.rules;
+      // Optional lists were already held to their own rule in buildLists (a big drop keeps the
+      // previous copy); only the required ones can stop the release here.
+      const before = requiredNames.has(f.name) ? prevFiles.get(f.name)?.rules : null;
       if (before) {
         const prevTotal = before.network + before.cosmetic;
         if (prevTotal > 0 && total < prevTotal * (1 - maxDrop)) {
@@ -320,7 +453,9 @@ async function main() {
   log(`done: ${version}`);
 }
 
-main().catch(e => {
-  console.error(e.stack ?? e);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch(e => {
+    console.error(e.stack ?? e);
+    process.exit(1);
+  });
+}
