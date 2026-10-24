@@ -17,7 +17,7 @@ Every release (tag `vYYYY.MM.DD.HHmm`, UTC) contains **all** files, so
 | --- | --- |
 | `manifest.json` | version, upstream commits, sha256 / size / rule counts per file |
 | `ubo-filters.txt`, `ubo-badware.txt`, `ubo-privacy.txt`, `ubo-quick-fixes.txt`, `ubo-unbreak.txt`, `ubo-resource-abuse.txt` | uBlock Origin's default lists (**trusted**) |
-| `<id>.txt` (about 60 files, named by their id in uBO's `assets.json`, e.g. `easylist.txt`, `fanboy-social.txt`, `vie-1.txt`, `rus-0.txt`, `urlhaus-1.txt`) | every list in uBlock Origin's `assets.json` except a few excluded ones (see `sources.json`). uBO-owned lists are **trusted**; the rest are not. Hosts-format lists are rewritten as rules. `manifest.json` records, per file, the address it was fetched from (`source`). If an upstream is down, the previous copy is kept |
+| `<id>.txt` (about 60 files, named by their id in uBO's `assets.json`, e.g. `easylist.txt`, `fanboy-social.txt`, `vie-1.txt`, `rus-0.txt`, `urlhaus-1.txt`) | every list in uBlock Origin's `assets.json` except a few excluded ones (see `sources.json`). uBO-owned lists are **trusted**; the rest are not. Hosts-format lists are rewritten as rules. `manifest.json` records, per file, the address it was fetched from (`source`). If an upstream is down, the previous copy is kept. Files outside uBO's set (`extraLists` in `sources.json`, now `hagezi-pro.txt`) carry `"tier": "strong"` in the manifest so a client can offer them as a separate, stronger option; every other list is `"tier": "standard"` |
 | `popups.txt` | all `$popup` / `$popunder` rules converted to `$document`, for a **second** engine (see [Popup blocking](#popup-blocking)) |
 | `resources.json` | adblock-rust `Resource[]`: uBO redirect resources, uBO scriptlets, Brave's extras |
 
@@ -141,3 +141,21 @@ Add an entry to `lists` in `sources.json` (`name`, `title`, `path` inside the uA
   hardened.
 
 See [NOTICE.md](NOTICE.md) for upstream licenses.
+
+## Host benchmark
+
+`bench/hosts.txt` is a list of hosts (or full URLs) a blocker is expected to stop. After every build
+that changes something, the `update` workflow runs them through the real engine
+(`nf-tool bench dist bench/hosts.txt`) as third-party requests of six types and writes the result
+to the run summary and to the `bench-report` artifact. For each host it says:
+
+| Verdict | Meaning |
+| --- | --- |
+| `full` | script, image, XHR/fetch, other and frame requests are all stopped |
+| `partial` | some of those types are stopped, others reach the host |
+| `ping-only` | only `ping` is stopped, by a generic `*$ping` rule; the host is not listed anywhere |
+| `none` | nothing is stopped |
+
+It also gives the rule that matched and the list that rule came from. Locally:
+`tools/nf-tool/target/release/nf-tool bench dist bench/hosts.txt [source_url] > report.json`.
+It does not fail a release: it is the backlog of hosts no list covers yet.

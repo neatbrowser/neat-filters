@@ -32,7 +32,7 @@
   "lists": [
     {
       "name": "ubo-resource-abuse.txt",
-      "title": "uBlock filters \u2013 Resource abuse",
+      "title": "uBlock filters – Resource abuse",
       "path": "filters/resource-abuse.txt",
       "trusted": true,
       "minRules": 10
@@ -70,6 +70,19 @@
       "urlhaus-1": 5000
     }
   },
+  "extraLists": [
+    {
+      "name": "hagezi-pro.txt",
+      "title": "HaGeZi's Multi PRO (ads, trackers, telemetry, malware) [hagezi-pro]",
+      "tier": "strong",
+      "trusted": false,
+      "minRules": 50000,
+      "urls": [
+        "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt",
+        "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/pro.txt"
+      ]
+    }
+  ],
   "popups": {
     "name": "popups.txt",
     "title": "Popup rules (converted from $popup and $popunder)",

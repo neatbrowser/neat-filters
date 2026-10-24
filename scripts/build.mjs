@@ -172,6 +172,8 @@ async function buildLists(sources, uAssetsSha, ublockDir, prev) {
   const entries = [
     ...sources.lists.map(e => ({ ...e, candidates: [{ raw: e.path }], required: true })),
     ...assetLists(sources, assetsJson),
+    // Lists that are not part of uBO's set (see `extraLists` in sources.json), tried address by address.
+    ...(sources.extraLists ?? []).map(e => ({ ...e, candidates: e.urls.map(url => ({ url })), required: false })),
   ];
   const optionalDrop = sources.sanity?.optionalDropRatio ?? 0.5;
   const reused = [];
@@ -353,7 +355,7 @@ async function main() {
     minByName.set(entry.name, entry.minRules ?? 1);
     files.push({
       name: entry.name, kind: 'list', title: entry.title, format: 'standard',
-      role: entry.role ?? 'network', trusted: entry.trusted, source, sha256: sha256(body), size: Buffer.byteLength(body),
+      role: entry.role ?? 'network', tier: entry.tier ?? 'standard', trusted: entry.trusted === true, source, sha256: sha256(body), size: Buffer.byteLength(body),
     });
   }
   fs.writeFileSync(path.join(outDir, 'resources.json'), resourcesJson);
