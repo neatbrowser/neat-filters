@@ -6,7 +6,7 @@ publish = false
 description = "Build helper for neat-filters: assembles uBO redirect resources and validates the published lists with adblock-rust."
 
 [dependencies]
-adblock = { version = "=0.13.3", features = ["resource-assembler", "debug-info"] }
+adblock = { version = "=0.13.3", features = ["resource-assembler", "debug-info", "css-validation"] }
 serde_json = "1"
 
 [profile.release]
