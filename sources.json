@@ -88,6 +88,11 @@
     "title": "Popup rules (converted from $popup and $popunder)",
     "minRules": 1000
   },
+  "documents": {
+    "name": "documents.txt",
+    "title": "Page rules (those with $document, $doc or $all)",
+    "minRules": 1000
+  },
   "sanity": {
     "maxRuleDropRatio": 0.3,
     "optionalDropRatio": 0.5

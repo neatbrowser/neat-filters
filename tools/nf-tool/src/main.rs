@@ -12,9 +12,14 @@
 //!       Loads the rules of one file into an engine and prints what it says about the page
 //!       (hide selectors, procedural actions, ...) as JSON. Used by the page script's tests.
 //!
+//!   nf-tool verdicts <dist_dir> <requests.jsonl>
+//!       Judges every request of the file (one JSON object per line: url, source, type) with the
+//!       network lists of the release and prints one JSON object per request: block, redirect,
+//!       exception, rule. Used to compare this engine with uBlock Origin's (see parity/).
+//!
 //!   nf-tool validate <dist_dir>
 //!       Loads every list and the resources listed in `<dist_dir>/manifest.json` into real
-//!       adblock-rust engines (one for network lists, one for `role: "popup"` lists), runs
+//!       adblock-rust engines (one for network lists, one for `role: "popup"` and `role: "document"` lists), runs
 //!       smoke tests and self-tests, and prints a JSON report. Exits non-zero on failure.
 
 use adblock::lists::{parse_filter, FilterSet, ParseOptions};
@@ -35,6 +40,7 @@ fn main() -> ExitCode {
     match args.get(1).map(String::as_str) {
         Some("assemble") if args.len() == 4 => assemble(&args[2], &args[3]),
         Some("validate") if args.len() == 3 => validate(&args[2]),
+        Some("verdicts") if args.len() == 4 => verdicts(&args[2], &args[3]),
         Some("cosmetic") if args.len() == 4 => {
             let text = std::fs::read_to_string(&args[2]).unwrap_or_default();
             let engine = Engine::new_with_list_text(&text);
@@ -179,6 +185,19 @@ fn selftest(failures: &mut Vec<String>) -> Vec<Value> {
         blocked(&popup, "https://pop.example/x", "https://ok.test/", "document"), false);
     check("popup: unrelated target is allowed",
         blocked(&popup, "https://good.example/x", "https://news.test/", "document"), false);
+
+    // page rules: only `$document` / `$all` rules stop a navigation, a plain rule does not.
+    let page = Engine::new_with_list_text(
+        "||bad.example^$document\n||worse.example^$all\n@@||bad.example/ok^$document\n",
+    );
+    check("document: a $document rule stops the navigation",
+        blocked(&page, "https://bad.example/", "https://bad.example/", "document"), true);
+    check("document: a $all rule stops the navigation",
+        blocked(&page, "https://worse.example/", "https://worse.example/", "document"), true);
+    check("document: its exception lets the page through",
+        blocked(&page, "https://bad.example/ok", "https://bad.example/ok", "document"), false);
+    check("document: another host is not stopped",
+        blocked(&page, "https://good.example/", "https://good.example/", "document"), false);
     out
 }
 
@@ -196,15 +215,21 @@ fn validate(dir: &str) -> ExitCode {
     };
     let files = manifest["files"].as_array().cloned().unwrap_or_default();
 
-    let network_files: Vec<&Value> =
-        files.iter().filter(|f| f["kind"] == "list" && f["role"] != "popup").collect();
+    let network_files: Vec<&Value> = files
+        .iter()
+        .filter(|f| f["kind"] == "list" && f["role"] != "popup" && f["role"] != "document")
+        .collect();
     let popup_files: Vec<&Value> =
         files.iter().filter(|f| f["kind"] == "list" && f["role"] == "popup").collect();
+    let document_files: Vec<&Value> =
+        files.iter().filter(|f| f["kind"] == "list" && f["role"] == "document").collect();
 
     let LoadedLists { engine_set: network_set, names: network_names } =
         load_lists(dir, &network_files, &mut failures);
     let LoadedLists { engine_set: popup_set, names: popup_names } =
         load_lists(dir, &popup_files, &mut failures);
+    let LoadedLists { engine_set: document_set, names: document_names } =
+        load_lists(dir, &document_files, &mut failures);
 
     // Resources
     let mut resources: Vec<Resource> = Vec::new();
@@ -223,12 +248,13 @@ fn validate(dir: &str) -> ExitCode {
     let mut engine = Engine::new_with_filter_set(network_set);
     engine.use_resources(resources);
     let popup_engine = Engine::new_with_filter_set(popup_set);
+    let document_engine = Engine::new_with_filter_set(document_set);
 
     // Per-list statistics, with the reason for every rejected line
     let mut supported: HashMap<String, bool> = HashMap::new();
     let mut lists_report = serde_json::Map::new();
     let mut totals: BTreeMap<String, u32> = BTreeMap::new();
-    for (eng, names) in [(&engine, &network_names), (&popup_engine, &popup_names)] {
+    for (eng, names) in [(&engine, &network_names), (&popup_engine, &popup_names), (&document_engine, &document_names)] {
         let info = eng.get_debug_info();
         for (idx, name) in names {
             let Some(s) = info.source_info.get(*idx) else {
@@ -300,8 +326,10 @@ const BENCH_TYPES: [&str; 6] = ["script", "image", "xmlhttprequest", "ping", "ot
 fn load_release(dir: &Path) -> Result<(Engine, Vec<(String, Vec<String>)>), String> {
     let manifest = read_json(&dir.join("manifest.json"))?;
     let files = manifest["files"].as_array().cloned().unwrap_or_default();
-    let network_files: Vec<&Value> =
-        files.iter().filter(|f| f["kind"] == "list" && f["role"] != "popup").collect();
+    let network_files: Vec<&Value> = files
+        .iter()
+        .filter(|f| f["kind"] == "list" && f["role"] != "popup" && f["role"] != "document")
+        .collect();
 
     let mut failures = Vec::new();
     let LoadedLists { engine_set, .. } = load_lists(dir, &network_files, &mut failures);
@@ -444,5 +472,54 @@ fn bench(dir: &str, hosts_file: &str, source: &str) -> ExitCode {
         "hosts": rows,
     });
     println!("{}", serde_json::to_string_pretty(&report).unwrap());
+    ExitCode::SUCCESS
+}
+
+fn verdicts(dir: &str, requests: &str) -> ExitCode {
+    use std::io::Write;
+    let (engine, _) = match load_release(Path::new(dir)) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let text = match std::fs::read_to_string(requests) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("{requests}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let out = std::io::stdout();
+    let mut out = std::io::BufWriter::new(out.lock());
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let v: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let (url, source, ty) = (
+            v["url"].as_str().unwrap_or_default(),
+            v["source"].as_str().unwrap_or_default(),
+            v["type"].as_str().unwrap_or("other"),
+        );
+        let row = match Request::new(url, source, ty, "") {
+            Ok(req) => {
+                let r = engine.check_network_request(&req);
+                // As neat_check_request decides: stopped only when should_block(); a redirect
+                // resource is then served instead of a plain block.
+                let stopped = r.should_block();
+                json!({
+                    "block": stopped,
+                    "redirect": stopped && r.redirect.is_some(),
+                    "exception": r.exception.is_some(),
+                    "rule": r.filter.as_ref().and_then(|f| f.raw_line.clone()),
+                    "exceptionRule": r.exception.as_ref().and_then(|f| f.raw_line.clone()),
+                })
+            }
+            Err(_) => json!({ "error": true }),
+        };
+        let _ = writeln!(out, "{row}");
+    }
     ExitCode::SUCCESS
 }

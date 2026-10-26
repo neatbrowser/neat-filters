@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { expandDenyallow, expandDenyallowLine, extractPopups, hostsToRules, isHostsFormat, splitNetworkRule } from './transform.mjs';
+import { anchorBareHostnames, expandDenyallow, extractDocuments, expandDenyallowLine, extractPopups, hostsToRules, isHostsFormat, splitNetworkRule } from './transform.mjs';
 
 test('splitNetworkRule ignores cosmetic rules and non-option tails', () => {
   assert.equal(splitNetworkRule('example.com##a[href*="$popup"]'), null);
@@ -87,4 +87,25 @@ test('hosts format is told from filter syntax', () => {
   assert.equal(isHostsFormat(['# c', ...hosts]), true);
   assert.equal(isHostsFormat(['||a.example^', '||b.example^$script', ...hosts.slice(0, 5)]), false);
   assert.equal(isHostsFormat(['! only comments', '||a.example^']), false);
+});
+
+test('anchorBareHostnames: a rule that is only a hostname or an IP means the host, as in uBO', () => {
+  assert.deepEqual(
+    anchorBareHostnames(['Pay.Example', '1.2.3.45', 'ads.js']),
+    ['||pay.example^', '||1.2.3.45^', '||ads.js^'],
+  );
+});
+
+// A last label of one character (1.2.3.4) is not a hostname for uBO either, so it stays plain text there too.
+test('anchorBareHostnames: anything with a path, option, wildcard or anchor is left alone', () => {
+  const same = ['||a.example^', '/ads/banner', 'a.example/path', 'a.example$script', '*.example', '|a.example', '@@a.example', 'a.example^', '##.ad', '-banner-'];
+  assert.deepEqual(anchorBareHostnames(same), same);
+});
+
+test('extractDocuments: only rules that name the page itself, `$doc` spelled `$document`', () => {
+  assert.deepEqual(
+    extractDocuments(['||vlc.de^$doc', '||a.example^$all', '@@||b.example^$document,1p', '||c.example^$script', '||d.example^$~document',
+      '||e.example^$image,all', '||ads.example^', '||x.example^$domain=all.example']),
+    ['||vlc.de^$document', '||a.example^$all', '@@||b.example^$document,1p', '||e.example^$image,all'],
+  );
 });

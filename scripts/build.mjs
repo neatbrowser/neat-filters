@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { normalize, preprocess } from './preprocess.mjs';
-import { expandDenyallow, extractPopups, hostsToRules, isHostsFormat } from './transform.mjs';
+import { anchorBareHostnames, expandDenyallow, extractDocuments, extractPopups, hostsToRules, isHostsFormat } from './transform.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Bit 0 = "trusted uBO list / trusted scriptlet". Must match TRUSTED in tools/nf-tool/src/main.rs.
@@ -166,6 +166,7 @@ async function buildLists(sources, uAssetsSha, ublockDir, prev) {
   const unknown = new Set();
   const lists = [];
   const popups = new Set();
+  const documents = new Set();
   let expandedTotal = 0;
 
   const assetsJson = JSON.parse(fs.readFileSync(path.join(ublockDir, 'assets/assets.json'), 'utf8'));
@@ -181,7 +182,7 @@ async function buildLists(sources, uAssetsSha, ublockDir, prev) {
 
   const process_ = async (entry, text, listPath, loader) => {
     const lines = await preprocess(text.replace(/^\uFEFF/, ''), { path: listPath, env: sources.env, load: loader, unknown });
-    const rules = entry.format === 'hosts' || isHostsFormat(lines) ? hostsToRules(lines) : normalize(lines);
+    const rules = entry.format === 'hosts' || isHostsFormat(lines) ? hostsToRules(lines) : anchorBareHostnames(normalize(lines));
     const expanded = expandDenyallow(rules);
     const { kept, popups: found } = extractPopups(expanded.lines);
     return { kept, found, denyallow: expanded.expanded };
@@ -225,6 +226,7 @@ async function buildLists(sources, uAssetsSha, ublockDir, prev) {
       if (old) {
         log(`${entry.name}: ${result ? `shrank to ${fresh} rules from ${prevTotal}` : 'no source reachable'}; keeping the previous release's copy`);
         lists.push({ entry, body: old, source: prevEntry.source });
+        for (const d of extractDocuments(old.split('\n'))) documents.add(d);
         reused.push(entry.name);
       } else {
         log(`${entry.name}: ${result ? `only ${fresh} rules` : 'no source reachable'} and no earlier copy; left out`);
@@ -235,6 +237,7 @@ async function buildLists(sources, uAssetsSha, ublockDir, prev) {
     if (!result) throw new Error(`${entry.name}: no source could be fetched`);
 
     for (const p of result.found) popups.add(p);
+    for (const d of extractDocuments(result.kept)) documents.add(d);
     expandedTotal += result.denyallow;
     const body = result.kept.join('\n') + '\n';
     lists.push({ entry, body, source });
@@ -252,6 +255,16 @@ async function buildLists(sources, uAssetsSha, ublockDir, prev) {
     minRules: sources.popups.minRules,
   };
   lists.push({ entry: popupEntry, body: [...popups].join('\n') + '\n' });
+
+  // Rules for navigations to a page itself: their own list and engine (see extractDocuments).
+  const documentEntry = {
+    name: sources.documents.name,
+    title: sources.documents.title,
+    role: 'document',
+    trusted: false,
+    minRules: sources.documents.minRules,
+  };
+  lists.push({ entry: documentEntry, body: [...documents].join('\n') + '\n' });
   return { lists, reused, skipped };
 }
 

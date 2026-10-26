@@ -82,6 +82,30 @@ export function extractPopups(lines) {
 }
 
 /**
+ * The rules that apply to a page itself (a top-level navigation): those with `$document`, `$doc`
+ * or `$all`, exceptions included. uBO stops a navigation only for such rules; a plain rule like
+ * `||ads.example^` does not stop someone from opening ads.example, though adblock-rust would.
+ * So these are published as a list of their own, for a separate engine (`role: "document"`).
+ * The rules stay in the network list too. `$doc` is spelled `$document`.
+ */
+export function extractDocuments(lines) {
+  const docs = [];
+  for (const line of lines) {
+    if (!line.includes('$') || !/[$,](?:~?)(?:document|doc|all)(?:[,=]|$)/.test(line)) continue;
+    const rule = splitNetworkRule(line);
+    if (!rule || rule.tokens.some(t => t.startsWith('~') && /^~(document|doc|all)$/.test(t))) continue;
+    if (!rule.tokens.some(t => t === 'document' || t === 'doc' || t === 'all')) continue;
+    const tokens = [];
+    for (const t of rule.tokens) {
+      const mapped = t === 'doc' ? 'document' : t;
+      if (!tokens.includes(mapped)) tokens.push(mapped);
+    }
+    docs.push(join(rule.exception, rule.pattern, tokens));
+  }
+  return docs;
+}
+
+/**
  * Turns a hosts-file list (`127.0.0.1 ads.example`, `0.0.0.0 ads.example`) into blocking rules
  * (`||ads.example^`), the way uBO reads such lists. Comments and `localhost` entries are dropped.
  * @returns {string[]}
@@ -101,6 +125,19 @@ export function hostsToRules(lines) {
     out.push(`||${host}^`);
   }
   return out;
+}
+
+// uBO's test for "this pattern is only a hostname" (static-filtering-parser.js, reHostnameAscii).
+const BARE_HOSTNAME = /^(?:[\da-z][\da-z_-]*\.)*[\da-z][\da-z-]*[\da-z]$/i;
+
+/**
+ * uBO reads a rule that is nothing but a hostname (or an IP address) and has no options as
+ * `||hostname^`: it blocks that host and its subdomains. adblock-rust reads it as a plain text
+ * that may appear anywhere in a URL, so `1.2.3.4` would also stop `https://21.2.3.45/` and
+ * `pay.example` would stop `https://mypay.example/`. Rewriting the rule keeps uBO's meaning.
+ */
+export function anchorBareHostnames(lines) {
+  return lines.map(l => (BARE_HOSTNAME.test(l) ? `||${l.toLowerCase()}^` : l));
 }
 
 /** True when a list is in hosts-file format (most of its non-comment lines are `0.0.0.0 host`). */
